@@ -3,10 +3,11 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
+from sklearn.preprocessing import StandardScaler
 
 # 페이지 기본 설정
-st.set_page_config(page_title="서울 기온 예측기 - 모델 평가", layout="wide")
-st.title("🌡️ 서울 연평균 기온 회귀 모델 비교 및 평가")
+st.set_page_config(page_title="서울 기온 다항회귀 분석기", layout="wide")
+st.title("🌡️ 서울 연평균 기온 다항 회귀(1차, 3차, 9차 곡선) 분석 및 예측")
 
 # 데이터 불러오기 함수
 DATA_URL = "https://raw.githubusercontent.com/greatsong/modudata/bb860932644270ad1199f10d3e7670e30231bce4/data/seoul.csv"
@@ -30,252 +31,177 @@ def load_and_process_data():
         (yearly_summary["연도"] <= 2025) & (yearly_summary["관측일수"] >= 300)
     ].copy()
 
-    # 독립변수: 1908년부터 지난 연수 (Year - 1908)
-    filtered_df["지난연수"] = filtered_df["연도"] - 1908
-
     return filtered_df
 
 
 df = load_and_process_data()
 
 # ---------------------------------------------------------
-# 데이터 분할 (테스트 데이터: 최근 20년 2006~2025)
+# 데이터 분할 (훈련용: ~2005년, 테스트용: 2006년~)
 # ---------------------------------------------------------
-df_test = df[(df["연도"] >= 2006) & (df["연도"] <= 2025)].copy()
-X_test = df_test["지난연수"].values
-y_test = df_test["평균기온"].values
+df_train = df[df["연도"] <= 2005].copy()
+df_test = df[df["연도"] >= 2006].copy()
 
-# 학습 데이터셋 3가지 준비
-# 1. 전체 데이터 (2005년 이하 학습)
-df_train_all = df[df["연도"] <= 2005].copy()
-# 2. 최근 100년 (1906~2005)
-df_train_100 = df[(df["연도"] >= 1906) & (df["연도"] <= 2005)].copy()
-# 3. 최근 50년 (1956~2005)
-df_train_50 = df[(df["연도"] >= 1956) & (df["연도"] <= 2005)].copy()
-
-
-# 회귀 모델 학습 및 평가 함수
-def fit_and_evaluate(df_train, X_test, y_test, name):
-    X_train = df_train["지난연수"].values
-    y_train = df_train["평균기온"].values
-
-    # 선형 회귀 학습
-    slope, intercept = np.polyfit(X_train, y_train, 1)
-
-    # 테스트 데이터 예측
-    y_pred = slope * X_test + intercept
-
-    # 평가 지표 계산
-    mae = mean_absolute_error(y_test, y_pred)
-    mse = mean_squared_error(y_test, y_pred)
-    r2 = r2_score(y_test, y_pred)
-
-    return {
-        "Name": name,
-        "Slope": slope,
-        "Slope_100y": slope * 100,
-        "Intercept": intercept,
-        "Train_Count": len(df_train),
-        "Start_Year": int(df_train["연도"].min()),
-        "End_Year": int(df_train["연도"].max()),
-        "MAE": mae,
-        "MSE": mse,
-        "R2": r2,
-        "y_pred": y_pred,
-    }
-
-
-# 3가지 학습 데이터로 모델 생성 및 테스트 데이터 평가
-res_all = fit_and_evaluate(df_train_all, X_test, y_test, "전체 (1908~2005)")
-res_100 = fit_and_evaluate(df_train_100, X_test, y_test, "최근 100년 (1906~2005)")
-res_50 = fit_and_evaluate(df_train_50, X_test, y_test, "최근 50년 (1956~2005)")
-
-# ---------------------------------------------------------
-# UI 구성: 1. 모델 성능 및 기울기 비교 표
-# ---------------------------------------------------------
-st.subheader("📊 최근 20년(2006~2025년) 테스트 데이터에 대한 모델 예측 성능 평가")
-
-metrics_df = pd.DataFrame(
-    [
-        {
-            "학습 기간": res_all["Name"],
-            "학습 데이터 수": f"{res_all['Train_Count']}개",
-            "기울기 (100년당 상승량)": f"+{res_all['Slope_100y']:.3f} °C",
-            "MAE (평균 절대 오차)": f"{res_all['MAE']:.4f}",
-            "MSE (평균 제곱 오차)": f"{res_all['MSE']:.4f}",
-            "R² (결정계수)": f"{res_all['R2']:.4f}",
-        },
-        {
-            "학습 기간": res_100["Name"],
-            "학습 데이터 수": f"{res_100['Train_Count']}개",
-            "기울기 (100년당 상승량)": f"+{res_100['Slope_100y']:.3f} °C",
-            "MAE (평균 절대 오차)": f"{res_100['MAE']:.4f}",
-            "MSE (평균 제곱 오차)": f"{res_100['MSE']:.4f}",
-            "R² (결정계수)": f"{res_100['R2']:.4f}",
-        },
-        {
-            "학습 기간": res_50["Name"],
-            "학습 데이터 수": f"{res_50['Train_Count']}개",
-            "기울기 (100년당 상승량)": f"+{res_50['Slope_100y']:.3f} °C",
-            "MAE (평균 절대 오차)": f"{res_50['MAE']:.4f}",
-            "MSE (평균 제곱 오차)": f"{res_50['MSE']:.4f}",
-            "R² (결정계수)": f"{res_50['R2']:.4f}",
-        },
-    ]
+# 데이터 개수 정보 출력
+col1, col2, col3, col4 = st.columns(4)
+col1.metric("훈련용 데이터 수 (~2005)", f"{len(df_train)}개 해")
+col2.metric(
+    "훈련 기간",
+    f"{int(df_train['연도'].min())}년 ~ {int(df_train['연도'].max())}년",
+)
+col3.metric("테스트용 데이터 수 (2006~)", f"{len(df_test)}개 해")
+col4.metric(
+    "테스트 기간",
+    f"{int(df_test['연도'].min())}년 ~ {int(df_test['연도'].max())}년",
 )
 
-st.dataframe(metrics_df, use_container_width=True)
+st.markdown("---")
+
+# ---------------------------------------------------------
+# 고차 다항식 오버플로우 방지를 위한 스케일링 (StandardScaler)
+# ---------------------------------------------------------
+scaler = StandardScaler()
+X_train_scaled = scaler.fit_transform(df_train[["연도"]].values).flatten()
+X_test_scaled = scaler.transform(df_test[["연도"]].values).flatten()
+
+y_train = df_train["평균기온"].values
+y_test = df_test["평균기온"].values
+
+# 2050년 예측을 위한 스케일링 변환
+year_2050_scaled = scaler.transform([[2050]])[0, 0]
+
+# ---------------------------------------------------------
+# 다항 회귀 모델 학습 및 테스트 데이터 평가 (1차, 3차, 9차)
+# ---------------------------------------------------------
+degrees = [1, 3, 9]
+results = []
+models = {}
+
+for deg in degrees:
+    # 스케일링된 X 데이터로 다항식 피팅
+    coeffs = np.polyfit(X_train_scaled, y_train, deg)
+    poly_func = np.poly1d(coeffs)
+    models[deg] = poly_func
+
+    # 학습에 사용되지 않은 테스트 데이터로 평가
+    y_pred_test = poly_func(X_test_scaled)
+    mae = mean_absolute_error(y_test, y_pred_test)
+
+    # 2050년 예측값 계산
+    pred_2050 = poly_func(year_2050_scaled)
+
+    results.append(
+        {
+            "차수": f"{deg}차 {"곡선" if deg > 1 else "직선"}",
+            "테스트 평균 오차 (MAE)": f"±{mae:.3f} °C",
+            "2050년 예상 기온": f"{pred_2050:.2f} °C",
+            "MAE_num": mae,
+            "pred_2050_num": pred_2050,
+        }
+    )
+
+# ---------------------------------------------------------
+# UI 구성: 1. 평가 및 예측 결과 표
+# ---------------------------------------------------------
+st.subheader("📋 훈련에 사용되지 않은 테스트 데이터(2006~2025) 채점 결과")
+
+res_df = pd.DataFrame(results)[
+    ["차수", "테스트 평균 오차 (MAE)", "2050년 예상 기온"]
+]
+st.dataframe(res_df, use_container_width=True)
+
+st.info(
+    "💡 **참고:** 고차 다항식(9차)일수록 훈련 데이터에는 지나치게 맞춰지지만(과적합), "
+    "학습에 포함되지 않은 미래 구간(2050년 등) 예측 시 폭발적으로 발산하는 경향을 볼 수 있습니다."
+)
 
 st.markdown("---")
 
 # ---------------------------------------------------------
-# UI 구성: 2. 주요 변화 핵심 분석 카드
-# ---------------------------------------------------------
-st.subheader("🔍 학습 기간에 따른 기울기 및 예측 성능 비교")
-
-col1, col2, col3 = st.columns(3)
-
-with col1:
-    st.markdown(
-        f"""
-        <div style="background-color: #f0f4f8; padding: 18px; border-radius: 10px;">
-            <h4 style="margin:0; color:#1f77b4;">전체 (1908~2005)</h4>
-            <p style="margin:5px 0;"><b>100년당 상승 폭:</b> +{res_all['Slope_100y']:.2f} °C</p>
-            <p style="margin:5px 0;"><b>MAE:</b> {res_all['MAE']:.3f} | <b>R²:</b> {res_all['R2']:.3f}</p>
-            <small style="color:#666;">과거 전체 데이터를 반영하여 완만한 상승률을 보임</small>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-with col2:
-    st.markdown(
-        f"""
-        <div style="background-color: #f0f7f0; padding: 18px; border-radius: 10px;">
-            <h4 style="margin:0; color:#2ca02c;">최근 100년 (1906~2005)</h4>
-            <p style="margin:5px 0;"><b>100년당 상승 폭:</b> +{res_100['Slope_100y']:.2f} °C</p>
-            <p style="margin:5px 0;"><b>MAE:</b> {res_100['MAE']:.3f} | <b>R²:</b> {res_100['R2']:.3f}</p>
-            <small style="color:#666;">전체 기간과 비슷하나 관측 누락 구간 제외로 안정적</small>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-with col3:
-    st.markdown(
-        f"""
-        <div style="background-color: #fff5f0; padding: 18px; border-radius: 10px;">
-            <h4 style="margin:0; color:#d62728;">최근 50년 (1956~2005)</h4>
-            <p style="margin:5px 0;"><b>100년당 상승 폭:</b> +{res_50['Slope_100y']:.2f} °C</p>
-            <p style="margin:5px 0;"><b>MAE:</b> {res_50['MAE']:.3f} | <b>R²:</b> {res_50['R2']:.3f}</p>
-            <small style="color:#666;">기울기가 가파르며, 최근 20년 실제 기온에 가장 가깝게 예측 (MAE 낮음)</small>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-st.markdown("---")
-
-# ---------------------------------------------------------
-# UI 구성: 3. 예측 슬라이더 및 시각화
+# UI 구성: 2. 예측 슬라이더 및 시각화
 # ---------------------------------------------------------
 selected_year = st.slider(
     "예측하고 싶은 연도를 선택하세요",
     min_value=1900,
     max_value=2100,
-    value=2026,
+    value=2050,
     step=1,
 )
 
-# 선택한 연도의 각 모델별 예측값
-pred_val_all = res_all["Slope"] * (selected_year - 1908) + res_all["Intercept"]
-pred_val_100 = res_100["Slope"] * (selected_year - 1908) + res_100["Intercept"]
-pred_val_50 = res_50["Slope"] * (selected_year - 1908) + res_50["Intercept"]
+selected_scaled = scaler.transform([[selected_year]])[0, 0]
 
 p_col1, p_col2, p_col3 = st.columns(3)
-p_col1.metric("전체 모델 예측값", f"{pred_val_all:.2f} °C")
-p_col2.metric("최근 100년 모델 예측값", f"{pred_val_100:.2f} °C")
-p_col3.metric("최근 50년 모델 예측값", f"{pred_val_50:.2f} °C")
+p_col1.metric("1차 모델 예측값", f"{models[1](selected_scaled):.2f} °C")
+p_col2.metric("3차 모델 예측값", f"{models[3](selected_scaled):.2f} °C")
+p_col3.metric("9차 모델 예측값", f"{models[9](selected_scaled):.2f} °C")
 
-# Plotly 그래프 시각화
+# Plotly 시각화
 fig = go.Figure()
 
-# 1. 학습 데이터 (1908~2005)
+# 1. 훈련 데이터
 fig.add_trace(
     go.Scatter(
-        x=df[df["연도"] <= 2005]["연도"],
-        y=df[df["연도"] <= 2005]["평균기온"],
+        x=df_train["연도"],
+        y=df_train["평균기온"],
         mode="markers",
-        name="학습 데이터 (1908~2005)",
-        marker=dict(color="gray", size=6, opacity=0.5),
+        name="훈련용 데이터 (~2005)",
+        marker=dict(color="blue", size=6, opacity=0.6),
     )
 )
 
-# 2. 테스트 데이터 (2006~2025)
+# 2. 테스트 데이터
 fig.add_trace(
     go.Scatter(
         x=df_test["연도"],
         y=df_test["평균기온"],
         mode="markers",
-        name="테스트 데이터 (2006~2025)",
-        marker=dict(color="black", size=8, symbol="diamond"),
+        name="테스트용 데이터 (2006~2025)",
+        marker=dict(color="red", size=8, symbol="diamond"),
     )
 )
 
-# X축 범위 설정 (1900~2100)
-years_range = np.arange(1900, 2101)
+# 곡선을 부드럽게 표현하기 위한 X축 범위 생성 (1900~2100)
+years_dense = np.linspace(1900, 2100, 400)
+years_dense_scaled = scaler.transform(years_dense.reshape(-1, 1)).flatten()
 
-# 회귀선 그리기
-fig.add_trace(
-    go.Scatter(
-        x=years_range,
-        y=res_all["Slope"] * (years_range - 1908) + res_all["Intercept"],
-        mode="lines",
-        name=f"전체 학습 (+{res_all['Slope_100y']:.2f}°C/100년)",
-        line=dict(color="#1f77b4", width=2),
-    )
-)
+# 각 차수별 곡선 그리기
+colors = {1: "green", 3: "orange", 9: "purple"}
+dashes = {1: "solid", 3: "dash", 9: "dot"}
 
-fig.add_trace(
-    go.Scatter(
-        x=years_range,
-        y=res_100["Slope"] * (years_range - 1908) + res_100["Intercept"],
-        mode="lines",
-        name=f"최근 100년 학습 (+{res_100['Slope_100y']:.2f}°C/100년)",
-        line=dict(color="#2ca02c", width=2, dash="dash"),
+for deg in degrees:
+    y_curve = models[deg](years_dense_scaled)
+    fig.add_trace(
+        go.Scatter(
+            x=years_dense,
+            y=y_curve,
+            mode="lines",
+            name=f"{deg}차 회귀 곡선",
+            line=dict(color=colors[deg], width=2.5, dash=dashes[deg]),
+        )
     )
-)
 
-fig.add_trace(
-    go.Scatter(
-        x=years_range,
-        y=res_50["Slope"] * (years_range - 1908) + res_50["Intercept"],
-        mode="lines",
-        name=f"최근 50년 학습 (+{res_50['Slope_100y']:.2f}°C/100년)",
-        line=dict(color="#d62728", width=2.5),
+# 선택 연도 예측 점 표시
+for deg in degrees:
+    pred_val = models[deg](selected_scaled)
+    fig.add_trace(
+        go.Scatter(
+            x=[selected_year],
+            y=[pred_val],
+            mode="markers",
+            name=f"{selected_year}년 {deg}차 예측점",
+            marker=dict(color=colors[deg], size=10, symbol="star"),
+            showlegend=False,
+        )
     )
-)
-
-# 선택 연도 예측점 표시
-fig.add_trace(
-    go.Scatter(
-        x=[selected_year, selected_year, selected_year],
-        y=[pred_val_all, pred_val_100, pred_val_50],
-        mode="markers",
-        name="선택 연도 예측점",
-        marker=dict(
-            color=["#1f77b4", "#2ca02c", "#d62728"], size=10, symbol="star"
-        ),
-    )
-)
 
 fig.update_layout(
-    title="학습 기간별 회귀선 비교 및 최근 20년 테스트 데이터 예측 검증",
+    title="1차, 3차, 9차 다항 회귀 곡선 비교 및 테스트 데이터 검증",
     xaxis_title="연도",
     yaxis_title="평균 기온 (°C)",
     hovermode="x unified",
     template="plotly_white",
     xaxis=dict(range=[1895, 2105]),
+    yaxis=dict(range=[df["평균기온"].min() - 3, df["평균기온"].max() + 10]),
     legend=dict(yanchor="top", y=0.99, xanchor="left", x=0.01),
 )
 
