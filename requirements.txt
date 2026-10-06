@@ -1,5 +1,3 @@
-streamlit
-pandas
-numpy
-plotly
-scikit-learn
+git add requirements.txt
+git commit -m "Add scikit-learn to requirements.txt"
+git push origin main
